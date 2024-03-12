@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/mux"
 )
@@ -26,7 +27,8 @@ func (s *ApiServer) Run() {
     router := mux.NewRouter()
 
     router.HandleFunc("/account", makeHTTPHandleFunc(s.handleAccount))
-    router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleGetAccountByID))
+    router.HandleFunc("/account/{id}", makeHTTPHandleFunc(s.handleAccountWithID))
+    router.HandleFunc("/transfer", makeHTTPHandleFunc(s.handleTransfer))
 
     log.Println("JSON API server running on port: ", s.listenAddr)
     http.ListenAndServe(s.listenAddr, router)
@@ -34,20 +36,32 @@ func (s *ApiServer) Run() {
 
 func (s *ApiServer) handleAccount(w http.ResponseWriter, r *http.Request) error {
     switch r.Method {
-    case "GET":
-        return s.handleGetAccount(w, r)
-    case "POST":
-        return s.handleCreateAccount(w, r)
-    case "DELETE":
-        return s.handleDeleteAccount(w, r)
-    }
+        case "GET":
+            return s.handleGetAccount(w, r)
+        case "POST":
+            return s.handleCreateAccount(w, r)
+        }
     return fmt.Errorf("Method not allowed %s", r.Method)
 } 
 
+func (s *ApiServer) handleAccountWithID(w http.ResponseWriter, r *http.Request) error {
+    switch r.Method {
+        case "GET":
+            return s.handleGetAccountByID(w, r)
+        case "DELETE":
+            return s.handleDeleteAccount(w, r)
+        }
+    return fmt.Errorf("Method not allowed %s", r.Method)
+}
+
 func (s *ApiServer) handleGetAccountByID(w http.ResponseWriter, r *http.Request) error {
-    id := mux.Vars(r)["id"]
-    fmt.Println(id)
-    return WriteJson(w, http.StatusOK, &Account{})
+    id, err := getId(r)
+    account, err := s.store.GetAccountByID(id)
+    if err != nil {
+        return err
+    }
+
+    return WriteJson(w, http.StatusOK, account)
 } 
 
 func (s *ApiServer) handleGetAccount(w http.ResponseWriter, r *http.Request) error {
@@ -74,11 +88,23 @@ func (s *ApiServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 } 
 
 func (s *ApiServer) handleDeleteAccount(w http.ResponseWriter, r *http.Request) error {
-    return nil
+    id, err := getId(r)
+    if err != nil {
+        return err
+    }
+    if err := s.store.DeleteAccount(id); err != nil {
+        return err
+    }
+    return WriteJson(w, http.StatusOK, map[string]int{"deleted": id})
 } 
 
 func (s *ApiServer) handleTransfer(w http.ResponseWriter, r *http.Request) error {
-    return nil
+    transferReq := new(TransferRequest)
+    if err := json.NewDecoder(r.Body).Decode(transferReq); err != nil {
+        return err
+    }
+    defer r.Body.Close()
+    return WriteJson(w, http.StatusOK, transferReq)
 } 
 
 func WriteJson(w http.ResponseWriter, status int, v any) error {
@@ -89,7 +115,7 @@ func WriteJson(w http.ResponseWriter, status int, v any) error {
 
 type apiFunc func(http.ResponseWriter, *http.Request) error
 type ApiError struct {
-    Error string
+    Error string `json:"error"`
 }
 
 func makeHTTPHandleFunc(f apiFunc) http.HandlerFunc {
@@ -98,4 +124,13 @@ func makeHTTPHandleFunc(f apiFunc) http.HandlerFunc {
             WriteJson(w, http.StatusBadRequest, ApiError{Error: err.Error()})
         }
     }
+}
+
+func getId(r *http.Request) (int, error) {
+    strId := mux.Vars(r)["id"]
+    id, err := strconv.Atoi(strId) 
+    if err != nil {
+        return id, fmt.Errorf("Invalid id given %d", id)
+    }
+    return id, nil
 }
